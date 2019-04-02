@@ -18,6 +18,8 @@ Jenkins는 공유 저장소를 두고 자신들의 코드를 계속해서 통합
 
 ## 지속적 전달(Continuous Delivery)과 지속적 배포(Continuous Deployment)란 무엇인가?
 
+---
+
 ## 젠킨스 설치하기
 ### Kubernetes 클러스터 생성
 쿠버네티스 클러스터를 생성하기 위해서 다음 명령을 수행하자.
@@ -51,6 +53,8 @@ Heapster is running at https://35.239.18.122/api/v1/namespaces/kube-system/servi
 KubeDNS is running at https://35.239.18.122/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
 Metrics-server is running at https://35.239.18.122/api/v1/namespaces/kube-system/services/https:metrics-server:/proxy
 ```
+
+---
 
 ## Helm 설치
 Helm은 쿠버네티스 애플리케이션의 설정과 배포를 용이하게 해주는 패키지 매니저로써 Helm 을 이용하여 Charts 레퍼지토리로부터 젠킨스를 설치할 것이다.
@@ -125,12 +129,13 @@ Client: &version.Version{SemVer:"v2.9.1", GitCommit:"20adb27c7c5868466912eebdf66
 Server: &version.Version{SemVer:"v2.9.1", GitCommit:"20adb27c7c5868466912eebdf6664e7390ebe710", GitTreeState:"clean"}
 ```
 
-=======================================================================================================================
+---
 
-* Jenkins 설정과 설치
-Cloud Source Repository 접근을 위해서는 서비스 계정 인증 정보를 사용해야하는데, 이를 위해서 GCP 특화된 플러그인을 추가 하기 위한 사용자정의 values 파일을 사용.
+## 젠킨스 설치하고 설정하기
+클라우드 소스 저장소로 접근하기 위해서는 서비스 계정 인증 정보를 사용해야하는데, 이를 위해서 GCP가 필요로하는 플러그인을 추가해야 한다.
+이 플러그인의 추가를 위해서 사용자정의 값들이 기록된 values.yaml 파일을 사용할 것이다.
 
-[contents in values file]
+```yaml
 Master:
   InstallPlugins:
     - kubernetes:1.12.6
@@ -160,11 +165,16 @@ NetworkPolicy:
 rbac:
   install: true
   serviceAccountName: cd-jenkins
+```
 
 
-* Helm CLI 를 이용하여 설정 정보와함께 chart 배포
+### Helm CLI 를 이용하여 설정 정보와 함께 chart 배포
+(chart : Helm이 사용하는 패키징 형식으로 연관된 쿠버네티스 리소스들을 나타내는 파일들의 집합이다.)
+```bash
 ./helm install -n cd stable/jenkins -f jenkins/values.yaml --version 0.16.6 --wait
-[Output]
+```
+[출력 결과]
+```bash
 NAME:   cd
 LAST DEPLOYED: Sat Mar 30 21:47:24 2019
 NAMESPACE: default
@@ -212,52 +222,69 @@ https://cloud.google.com/solutions/jenkins-on-container-engine
 Configure the Kubernetes plugin in Jenkins to use the following Service Account name cd-jenkins using the following steps:
   Create a Jenkins credential of type Kubernetes service account with service account name cd-jenkins
   Under configure Jenkins -- Update the credentials config in the cloud section to use the service account credential you created in the step above.
+```
 
 
-* Jenkins pod 이 실행중이고 container 가 READY 상태인지 확인
+### 젠킨스 pod 이 실행중이고 컨테이너가 준비완료(READY) 상태인지 확인
+```bash
 kubectl get pods
-[Output]
+```
+[출력결과]
+```bash
 NAME                          READY     STATUS    RESTARTS   AGE
 cd-jenkins-5dc9cd6487-zv9r9   1/1       Running   0          3m
+```
 
-* Cloud Shell 에서 Jeknins UI 로 포트포워딩 설정
+### 클라우드 쉘에서 젠킨스 UI로 포트포워딩 설정
+```bash
 export POD_NAME=$(kubectl get pods -l "component=cd-jenkins-master" -o jsonpath="{.items[0].metadata.name}")
 kubectl port-forward $POD_NAME 8080:8080 >> /dev/null &
 (POD_NAME : cd-jenkins-5dc9cd6487-zv9r9)
+```
 
-* Jenkins 서비스 생성 확인
+### Jenkins 서비스 생성 확인
+```bash
 kubectl get svc
-[Output]
+```
+[출력결과]
+```bash
 NAME               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)     AGE
 cd-jenkins         ClusterIP   10.11.248.23    <none>        8080/TCP    5m
 cd-jenkins-agent   ClusterIP   10.11.245.132   <none>        50000/TCP   5m
 kubernetes         ClusterIP   10.11.240.1     <none>        443/TCP     15m
+```
 
-Jenkins 마스터가 요청할 때마다 빌더 노드들이 자동으로 실행될 수 있도록 Jenkins 의 Kubernetes 플러그인을 사용.
-빌더 노드들은 작업이 끝나면 자동으로 종료되고 사용한 리소드들은 클러스터 리소스 풀로 반환.
+우리는 젠킨스에서 쿠버네티스 플러그인을 사용하여 젠킨스 마스터가 요청할 때마다 빌더 노드들이 자동으로 실행되도록 하고있다.
+빌더 노드들은 작업이 끝나면 자동으로 종료되고, 종료 전에 사용하고 있던 리소드들은 클러스터 리소스 풀로 반환한다.
 
-이 서비스는 selector 와 매치되는 Pod 들에 8080과 50000 포트를 노출함.
-이것들은 Kubernetes 클러스터에서 Jenkins 웹 UI 와 builder/agent 등록 포트들임.
-추가적으로 jenkins-ui 서비스들은 ClusterIP 를 이용하여 노출 함으로써 클러스터 밖에서는 접근할 수 없도록 함.
+이 서비스는 8080포트와 50000포트를 외부 pod 중에서 선택자(selector)와 일치하는 pod들에게 노출한다.
+이 포트들은 쿠버네티스 클러스터에서 젠킨스 웹 UI 와 builder/agent 의 등록 포트들이다.
+추가적으로 jenkins-ui 서비스들은 ClusterIP 를 이용하여 노출 함으로써 클러스터 밖에서는 접근할 수 없도록 한다.
 
-=======================================================================================================================
+---
 
-* Jenkins 연결
-Jenkins chart 는 관리자 암호를 자동으로 생성하는데 이 암호를 확인하기 위해서 다음을 실행.
+## 젠킨스에 연결하기
+젠킨스 chart 는 관리자 암호를 자동으로 생성한다. 이 암호를 확인하기 위해서 다음을 실행하자.
 
+```bash
 printf $(kubectl get secret cd-jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode);echo
+```
 
-Jenkins user interface 확인을 위해서 Web Preview 를 이용
-여기서 admin / 자동 생성된 암호 를 이용하여 로그인
+젠킨스 사용자 인터페이스 확인을 위해서 웹 프리뷰(Web Preview) 를 이용하자.
+웹프리뷰에서  
+ID : admin  
+Password : 자동 생성된 암호  
+를 이용하여 로그인하자.
 
-=======================================================================================================================
+---
 
-* gceme 샘플 애플리케이션 이해
-Go 언어로 작성되어 있으며 레퍼지토리 sample-app 디렉토리에 위치함.
-Compute Engine instance 에서 실행하면 인스턴스의 메타데이터를 카드 형대로 보여줌.
-이 애플리케이션은 두개의 모드를 지원함으로써 MSA 를 묘사함.
-Backend mode : gceme 는 8080 포트에서 수신 대기하다가 Compute Engine Instance 메타데이터를 JSON 포멧으로 반환
-Frontend mode : gceme 는 backend gceme 서비스에 정보를 요청하고 결과 JSON 을 UI 로 출력
+## gceme 샘플 애플리케이션 이해
+여러분은 gceme 샘플 애플리케이션을 지속적 배포 파이프라인에 배포해 볼 것이다. 이 샘플 애플리케이션은 Go 언어로 작성되어 있으며 레퍼지토리 sample-app 디렉토리에 위치해 있다. Compute 엔진 인스턴스에서 샘플 애플리케이션을 실행하면 인스턴스의 메타데이터를 카드 형대로 보여준다.
+
+
+이 애플리케이션은 두개의 모드를 지원함으로써 MSA(Micro Service Architecture) 를 묘사하고있다.
+**Backend mode** : gceme 는 8080 포트에서 수신 대기하다가 Compute Engine Instance 메타데이터를 JSON 포멧으로 반환
+**Frontend mode** : gceme 는 backend gceme 서비스에 정보를 요청하고 결과 JSON 을 UI 로 출력
 
 =======================================================================================================================
 
