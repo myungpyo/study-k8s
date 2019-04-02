@@ -8,67 +8,93 @@
 
 이번 랩에서 다음 다이어그램과 같은 지속적 배포 파이프라인을 만들어볼 것이다.
 
-diagram 1
+![diagram](https://github.com/myungpyo/study-k8s/blob/master/k8s_spinnaker_1.png)
+
+쿠버네티스 엔진과 스피너커를 이용하여 여러분은 견고한 지속적 배포 플로우를 만들 수 있고, 이를 통해 여러분의 소프트웨어가 개발되고 동작이 확인되는대로 배포할 수 있는 환경을 만들 수 있다. 빠른 개발 주기가 최종 목표라 하더라고, 여러분은 각각의 애플리케이션 리비전이 실제 서비스로 배포되기 전에 자동화된 검증 프로세스를 통과하는 것을 확인해야 한다. 변경사항이 자동화된 검증에서 통과하더라도, 수동으로 애플리케이션을 추가 검증해볼 수 있다.
+
+팀에서 애플리케이션의 실 서비스 배포가 결정되고 난 뒤에, 팀 멤버 중 한명이 실 서비스 배포를 승인할 수 있다.
+
+---
+
+## 애플리케이션 배포 파이프라인
+이 랩에서 여러분은 다음 다이어그램과 같은 지속적 배포 파이프라인을 구성할 것이다.
+![diagram](https://github.com/myungpyo/study-k8s/blob/master/k8s_spinnaker_2.png)
 
 ---
 
 ## 환경 설정
-랩 진행을 위해 필요한 인프라스트럭처와 아이덴티티를 설정.
-먼저 Spinnaker 와 샘플 애플리케이션을 배포할 Kubernetes 엔진 생성.
+랩 진행을 위해 필요한 인프라 스트럭처와 아이덴티티를 설정해보자.  
+먼저 스피너커와 샘플 애플리케이션을 배포할 쿠버네티스 엔진을 생성해 보자.  
 
-Set the default compute zone:
+기본 컴퓨트 존 설정:
+```bash
 gcloud config set compute/zone us-central1-f
+```
 
-Spinnaker 학습 샘플 애플리케이션으로 Kubernetes 엔진 생성:
+스피너커 학습 샘플 애플리케이션으로 쿠버네티스 엔진 생성:
+```bash
 gcloud container clusters create spinnaker-tutorial --machine-type=n1-standard-2 --enable-legacy-authorization
+```
 
-이 배포는 완료될 때까지 5~10분정도 걸림. 기본 스코프에 대한 경고를 볼 수 있지만 이번 랩에는 지장이 없으므로 무시해도 좋음.
-완료되고나면 실행 중인 클러스터의 다음과 같은 상세한 상태들이 보고됨.
-name, location, version, ip-address, machine-type, node version, number of nodes and status of the cluster
+이 작업은 완료될 때까지 5~10분정도 걸릴 것이다. 진행되는 동안 기본 스코프에 대한 경고를 볼 수 있지만 이번 랩에는 지장이 없는 경고이므로 무시해도 괜찮다.
+작업이 완료되고나면 실행 중인 클러스터의 상세한 상태들이 보고되는데, name, location, version, ip-address, machine-type, node version, number of nodes and status of the cluster 등에 대한 내용이다.
 
-아이덴티티 및 접근 제어 설정
+## 아이덴티티 및 접근 제어 설정
 Spinnaker 가 클라우드 스토리지에 데이터를 쓸수있게 권한 부여하기 위한 클라우드 IAM 서비스 계정을 생성. Spinnaker 는 파이프라인 데이터를 클라우드 스토리지에 저장하므로써 신뢰성있고 회복 가능한 상태로 동작함. 만약 Spinnaker 배포가 예상치 못하게 실패할 경우 수 분 내에 원본 파이프라인 데이터와 동일한 데이터에 접근하여 동일한 배포를 생성할 수 있다.
 
-다음 단계들을 따라서 시작 스크립트를 클라우드 스토리지 버킷에 업로드
+시작 스크립트를 클라우드 스토리지 버킷에 업로드하기 위해서 다음 단계들을 따르자.
 
-서비스 계정 생성:
+서비스 계정을 생성:
+```bash
 gcloud iam service-accounts create spinnaker-storage-account \
     --display-name spinnaker-storage-account
+```
 
-서비스 계정 이메일 주소와 현재 프로젝트 ID 를 환경 변수에 저장하여 나중에 사용 :
+나중에 사용하기 위해서 서비스 계정 이메일 주소와 현재 프로젝트 ID 를 환경 변수에 저장 :
+```bash
 export SA_EMAIL=$(gcloud iam service-accounts list \
     --filter="displayName:spinnaker-storage-account" \
     --format='value(email)')
 
 export PROJECT=$(gcloud info --format='value(config.project)')
+```
 
 서비스 계정에 storage.admin 롤을 부여:
-
+```bash
 gcloud projects add-iam-policy-binding \
     $PROJECT --role roles/storage.admin --member serviceAccount:$SA_EMAIL
+```
 
-서비스 계정 키 다운로드. 나중 단계에서 Spinnaker 를 설치하고 이 키를 Kubernetes 엔진으로 업로드.
-
+서비스 계정 키 다운로드하고 이후 단계에서 스피너커를 설치하고 나서 이 키를 쿠버네티스 엔진으로 업로드:
+```bash
 gcloud iam service-accounts keys create spinnaker-sa.json \
      --iam-account $SA_EMAIL
+```
 
-========================================================================================================================
+---
 
-Helm 을 이용한 Spinnaker 배포
-이번 섹션에서는 Chart 레퍼지토리로부터 Spinnaker 를 배포하기위허 Helm 을 이용함.
-Helm 은 Kubernetes 애플리케이션을 설정, 배포하기위해 사용할 수 있는 패키지 매니저.
+## 헴(Helm) 을 이용한 스피너커 배포
+이번 섹션에서는 차트(Chart) 레퍼지토리로부터 스피너커를 배포하기위해 헴을 이용한다.  
+헴은 쿠버네티스 애플리케이션을 설정, 배포 하기 위해 사용할 수 있는 패키지 매니저이다.
 
-Helm 설치
+### Helm 설치
 Helm 바이너리 다운로드 및 설치:
+```bash
 wget https://storage.googleapis.com/kubernetes-helm/helm-v2.5.0-linux-amd64.tar.gz
+```
 
-로컬에 압축해제
+### 로컬에 압축해제
+```bash
 tar zxfv helm-v2.5.0-linux-amd64.tar.gz
 cp linux-amd64/helm .
+```
 
-클러스터에 Helm 서버사이드인 Tiller 설치하기위해 Helm 초기화:
+클러스터에 헴 서버사이드인 틸러(Tiller)를 설치하기위해 헴 초기화:
+```bash
 ./helm init
-[Output]
+```
+[출력결과]
+```bash
 Creating /home/google2918759_student/.helm
 Creating /home/google2918759_student/.helm/repository
 Creating /home/google2918759_student/.helm/repository/cache
@@ -81,38 +107,48 @@ $HELM_HOME has been configured at /home/google2918759_student/.helm.
 
 Tiller (the helm server side component) has been installed into your Kubernetes Cluster.
 Happy Helming!
-
+```
+```bash
 ./helm repo update
-[Output]
+```
+[출력결과]
+```bash
 Hang tight while we grab the latest from your chart repositories...
 ...Skip local chart repository
 ...Successfully got an update from the "stable" chart repository
 Update Complete. ⎈ Happy Helming!⎈
+```
 
-Helm 이 제대로 설치되었는지 다음 명령으로 확인. 정상적으로 서리되었다면 클라이언트와 서버에 v2.5.0 버전이 보임.
+헴이 제대로 설치되었는지 다음 명령으로 확인하자. 정상적으로 설치되었다면 클라이언트와 서버에 v2.5.0 버전이 보일 것이다.
+```bash
 ./helm version
-[Output]
+```
+[출력결과]
+```bash
 E0331 11:38:59.404255     477 portforward.go:212] Unable to create listener: Error listen tcp6 [::1]:42121: bind: cannot assign requested address
 Client: &version.Version{SemVer:"v2.5.0", GitCommit:"012cb0ac1a1b2f888144ef5a67b8dab6c2d45be6", GitTreeState:"clean"}
 Server: &version.Version{SemVer:"v2.5.0", GitCommit:"012cb0ac1a1b2f888144ef5a67b8dab6c2d45be6", GitTreeState:"clean"}
+```
 
-Helm 을 설치하고 설정하는동안 리스너 서비스나 포트 바인딩 설정과 관련된 오류를 볼 수 있다. 이것은 현재 Helm 버전이 가진 이슈로 클라우드 쉘 IPv6 설정과 관련이 있다. 이 오류는 랩에 영향을 주지 않으므로 무시해도 좋다.
+헴을 설치하고 설정하는동안 리스너 서비스나 포트 바인딩 설정과 관련된 오류를 보게 될 수 있다. 이것은 현재 헴 버전이 가진 이슈로, 클라우드 쉘 IPv6 설정과 관련이 있다. 이 오류는 현재 랩의 진행에는 영향을 주지 않으므로 무시해도 좋다.
 
-Spinnaker 설정
-In Cloud Shell, create a bucket for Spinnaker to store its pipeline configuration:
-클라우드 쉘에서 Spinnaker 의 파이프라인 설정을 저장하기 위한 버킷을 생성
-
+### Spinnaker 설정
+클라우드 쉘에서 스피너커의 파이프라인 설정을 저장하기 위한 버킷을 생성하자.
+```bash
 export PROJECT=$(gcloud info \
     --format='value(config.project)')
 
 export BUCKET=$PROJECT-spinnaker-config
 
 gsutil mb -c regional -l us-central1 gs://$BUCKET
-[Output]
+```
+[출력결과]
+```bash
 Creating gs://qwiklabs-gcp-74ae5829762b41c7-spinnaker-config/...
+```
 
 다음 명령을 수행해서 설정 파일 생성:
-
+```bash
 export SA_JSON=$(cat spinnaker-sa.json)
 export PROJECT=$(gcloud info --format='value(config.project)')
 export BUCKET=$PROJECT-spinnaker-config
@@ -135,165 +171,183 @@ accounts:
   password: '$SA_JSON'
   email: 1234@5678.com
 EOF
+```
 
-
-Spinnaker chart 배포
-Helm 명령행 인터페이스를 사용하여 설정 세트와 차트를 배포. 이 명령은 보통 5~10분정도 걸림.
-
+### 시피너커 차트 배포
+헴 명령행 인터페이스를 사용하여 설정 세트와 차트를 배포하자. 이 명령은 보통 5~10분정도 걸린다.
+```bash
 ./helm install -n cd stable/spinnaker -f spinnaker-config.yaml --timeout 600 \
     --version 0.3.1
+```
 
-여기서 생성되지 않은 리스너 경고를 볼 수 있지만 무시해도 좋은. 이후로 몇분정도 설치 과정 계속.
-명령이 완료된 이후, 클라우드 쉘에서 Spinnaker 로 포트포워딩 설정을 위해 다음 명령 수행.
-
+여기서 생성되지 않은 리스너에 대한 경고를 볼 수 있지만 무시해도 좋다. 이후로 몇분정도 설치 과정 계속된다.  
+명령이 완료된 이후, 클라우드 쉘에서 스피너커로 포트포워딩 설정을 위해 다음 명령 수행하자.
+```bash
 export DECK_POD=$(kubectl get pods --namespace default -l "component=deck" \
     -o jsonpath="{.items[0].metadata.name}")
 kubectl port-forward --namespace default $DECK_POD 8080:9000 >> /dev/null &
+```
 
-Spinnaker 사용자 인터페이스를 열기위해 클라우드 쉘 윈도우 좌상단의 Web Preview 아이콘을 누르고 포트 8080으로 사용.
+스피너커 사용자 인터페이스를 열기위해 클라우드 쉘 윈도우 좌상단의 `Web Preview` 아이콘을 누르고 포트는 8080으로 사용하자.
 
-SPinnaker 사용자 인터페이스에서 환영 메시지 확인.
-(Spinnaker 사용자 인터페이스 접근을 위해 사용할 것이므로 탭을 연상태도 유지)
+스피너커 사용자 인터페이스에서 환영 메시지를 확인하자.
+(스피너커 사용자 인터페이스 접근을 위해 이후에 사용할 것이므로 탭을 열어놓은 상태로 두자.)
 
-========================================================================================================================
+---
 
-도커 이미지 생성
-다음으로 애플리케이션 소스 코드 변경을 탐지하고 도커 이미지를 빌드하고 컨테이너 레지스트리에 등록하기 위한 컨테이너 빌더 설정
+## 도커 이미지 생성
+다음으로 애플리케이션 소스 코드 변경을 탐지하고, 도커 이미지를 빌드하고, 컨테이너 레지스트리에 등록하기 위한 컨테이너 빌더를 설정하자.
 
-소스 코드 레지스트리 생성
+### 소스 코드 레지스트리 생성
 클라우드 쉘 탭으로 돌아가서 샘플 애플리케이션 소스코드 다운로드:
-
+```bash
 wget https://gke-spinnaker.storage.googleapis.com/sample-app.tgz
+```
 
 소스코드 압축 해제:
-
+```bash
 tar xzfv sample-app.tgz
+```
 
 샘플 애플리케이션 소스 디렉토리로 이동:
-
+```bash
 cd sample-app
+```
 
-레퍼지토리에서 커밋을 위한 이메일 주소와 사용자 이름 설정.
+레퍼지토리에서 커밋을 위한 이메일 주소와 사용자 이름 설정.  
 [EMAIL_ADDRESS], [USERNAME] 을 랩에서사용할 메일 주소와 사용자명으로 변경.
-
+```bash
 git config --global user.email "[EMAIL_ADDRESS]"
 
 git config --global user.name "[USERNAME]"
+```
 
 소스 코드 레퍼지토리에서 최초 커밋 생성.
-
+```bash
 git init
 
 git add .
 
 git commit -m "Initial commit"
+```
 
 코드를 저장할 레퍼지토리 생성:
-
+```bash
 gcloud source repos create sample-app
+```
 
-과금될 수 있다는 메시지 무시.
-
+과금될 수 있다는 메시지는 이 랩에는 해당되지 않으므로 무시하자.
+```bash
 git config credential.helper gcloud.sh
+```
 
-새로 생성된 레퍼지토리를 리모트에 추가.
-
+새로 생성된 레퍼지토리를 리모트에 추가하자.
+```bash
 export PROJECT=$(gcloud info --format='value(config.project)')
 
 git remote add origin https://source.developers.google.com/p/$PROJECT/r/sample-app
+```
 
 코드를 새 레퍼지토리 마스터 브랜치로 푸시:
-
+```bash
 git push origin master
+```
 
-콘솔에서 소스코드 확인해보기
+클라우드 콘솔에서 소스코드가 제대로 업로드 되었는지 다음과 같은 경로로 확인해보자.  
 Navigation menu > Tools section > Source Repository > Repositories
 
-빌드 트리거 설정
-컨테이너 빌더를 설정하여 소스 레퍼지토리에 git 태그가 푸시될 때마다 도커 이미지를 생성하고 푸시하도록 만들기.
-컨테이너 빌더는 자동적으로 소스 코드를 체크아웃하고 레퍼지토리 Dockerfile 을 이용하여 이미지를 생성하고 Google Cloud Container Registry로 푸시.
+### 빌드 트리거 설정
+컨테이너 빌더를 설정하여 소스 레퍼지토리에 git 태그가 푸시될 때마다 도커 이미지를 생성하고, 생성된 이미지를 푸시하도록 만들지.
+컨테이너 빌더는 자동적으로 소스 코드를 체크아웃하고 레퍼지토리의 Dockerfile 을 이용하여 이미지를 생성하고 구글 클라우드 컨테이너 레지스트리로 푸시한다.
 
-클라우드 플랫폼 콘솔에서 Navigation menu > Cloud Build > Build triggers.
-트리거 생성 클릭
-Cloud Source Repository 선택 후 [계속] 클릭.
-새로 생성 한 sample-app 라디오 버튼 클릭하고 [계속] 클릭.
+![diagram](https://github.com/myungpyo/study-k8s/blob/master/k8s_spinnaker_3.png)
 
-다음과 같이 트리거 설정:
+클라우드 플랫폼 콘솔에서 Navigation menu > Cloud Build > Build triggers 로 이동하여 **트리거 생성**을 클릭하자.  
+그 후, 클라우드 소스 저장소를 선택 후 [계속]을 클릭하자.  
+새로 생성 한 sample-app 라디오 버튼 클릭하고 [계속] 클릭.  
 
+다음과 같이 트리거를 설정:
+```bash
 Name:sample-app-tags
 Trigger type: Tag
 Tag (regex): v.*
 Build configuration: cloudbuild.yaml
 cloudbuild.yaml location: /cloudbuild.yaml
+```
 
-트리거 생성 클릭.
+트리거 생성을 클릭하자.  
 
-지금부터 소스코드 레퍼지토리에 v로 시작하는 태그를 푸시 할 때마다 컨테이너 빌더는 자동적으로 애플리케이션을 도커 이미지로 빌드하고 컨테이너 레지스트리에 푸시한다.
+지금부터 소스코드 레퍼지토리에 v로 시작하는 태그를 푸시 할 때마다 컨테이너 빌더는 자동적으로 애플리케이션을 도커 이미지로 빌드하고, 빌드된 이미지를 컨테이너 레지스트리에 푸시한다.
 
-이미지 빌드
+### 이미지 빌드
 다음 단계를 따라 첫번째 이미지를 빌드하자:
 
 클라우드 쉘로 돌아와서 git 태그 생성:
-
+```bash
 git tag v1.0.0
+```
 
 현재 sample-app 디렉토리인 것을 확인하고 tag 를 푸시:
-
+```bash
 git push --tags
+```
 
 콘솔로 돌아와서, 클라우드 빌드에서 빌드 기록을 클릭하여 빌드가 시작되었는지 확인. 아니라면 이전 섹션에서 트리거가 제대로 설정되었는지 확인.
 
-========================================================================================================================
+---
 
-개발 파이프라인 설정
-이제 이미지들이 자동 빌드되고 있으며, 이것들을 Kubernetes 클러스터로 배포할 필요가 있다.
+## 개발 파이프라인 설정
+이제 이미지들이 자동 빌드되고 있으며, 이것들을 쿠버네티스 클러스터로 배포할 필요가 있다.  
+테스트를 위해 축소된 환경으로 배포를 수행해보자. 테스트가 성공한 후에 코드 변경사항을 실제 서비스에 배포하기 위해서는 수동으로 승인 해야 한다.
 
-테스트를 위해 축소된 환경으로 배포를 수행해보자. 테스트가 성공한 후에 코드 변경사항을 실제 서비스에 배포하기 위해서는 수동으로 승인해야 한다.
+### 애플리케이션 생성
+스피너커 탭에서 액션을 클릭하고, 애플리케이션 생성을 선택하자.
 
-애플리케이션 생성
-Spinnaker 탭에서 액션을 클릭하고 애플리케이션 생성 선택
-
-새 애플리케이션 다이얼로그에서 다음과 같이 입력
-
+새 애플리케이션 다이얼로그에서 다음과 같이 입력하자.
+```bash
 Name: sample
 Owner Email: [your lab username/email address]
-생성 클릭
+```
+그런 다음 **생성**을 클릭하자.
 
 
-서비스 로드밸런서 생성
-정보를 수동으로 입력하는 것을 피하기위해서 Kubernetes 명령행 인터페이스를 사용하여 서비스 로드밸런서를 생성하자.
-대신해서, Spinnaker 페이지에서 이 동작을 수행할 수도 있다.
+### 서비스 로드밸런서 생성
+정보를 수동으로 입력해야 하는 번거로움을 피하기 위해서 쿠버네티스 명령행 인터페이스를 사용하여 서비스 로드밸런서를 생성하자.  
+이를 대신해서 스피너커 페이지에서 동일한 동작을 수행 할 수도 있다.  
 
 클라우드 쉘로 이동하여 샘플 앱의 루트 디렉토리에서 다음 명령 실행:
-
+```bash
 kubectl apply -f k8s/services
 [Output]
 service/sample-backend-canary created
 service/sample-backend-prod created
 service/sample-frontend-canary created
 service/sample-frontend-prod created
+```
 
-배포 파이프라인 생성
+### 배포 파이프라인 생성
 다음으로 지속적 배포를 위한 파이프라인을 생성하자. 이 랩을 위해서 파이프라인은 컨테이너 레지스트리에 v로 시작하는 태그를 갖는 도커 이미지를 탐지하도록 설정될 것이다.
 
 Spinnaker 인스턴스에 예제 파이프라인을 업로드 하기위해서 다음 명령을 실행하자:
-
+```bash
 export PROJECT=$(gcloud info --format='value(config.project)')
 sed s/PROJECT/$PROJECT/g spinnaker/pipeline-deploy.json | curl -d@- -X \
     POST --header "Content-Type: application/json" --header \
     "Accept: /" http://localhost:8080/gate/pipelines
+```
 
-Spinnaker 탭의 상단 네비게이션 바에서 파이프라인 클릭. 이곳에 Deploy 라는 1개 파이프라인이 준비되어 있는 것을 확인.
+스피너커 탭의 상단 네비게이션 바에서 파이프라인 클릭하고, 이곳에 Deploy 라는 1개의 파이프라인이 준비되어 있는 것을 확인하자.
 
-설정을 클릭하고 배포 선택.
+**설정**을 클릭하고 **배포**를 선택하자.
 
-지속적 배포 파이프라인 설정이 다음과 같이 보임.
+지속적 배포 파이프라인 설정이 다음과 같이 보일 것이다.
+![diagram](https://github.com/myungpyo/study-k8s/blob/master/k8s_spinnaker_4.png)
 
-방금 만든 설정은 v로 시작하는 git 태그르 푸시할 때 파이프라인을 시작하는 트리거를 포함함. 다음에는 수동으로 파이프라인을 실행하여 테스트 해보고 나서, git 태그를 푸시해서 테스트해보면서 자동으로 파이프라인이 동작하는지 확인해보자.
+방금 만든 설정은 v로 시작하는 git 태그를 푸시할 때 파이프라인을 시작하는 트리거를 포함한다. 다음에는 수동으로 파이프라인을 실행하여 테스트 해보고 나서, git 태그를 푸시해서 테스트 해보면서 자동으로 파이프라인이 동작하는지도 확인해보자.
 
-========================================================================================================================
+---
 
-파이프라인 수동으로 실행
+## 파이프라인 수동으로 실행
 파이프라인을 클릭하여 파이프라인 페이지로 돌아가자.
 
 배포 다음에 있는 수동 실행 시작 클릭
