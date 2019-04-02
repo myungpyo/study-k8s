@@ -286,7 +286,7 @@ Password : 자동 생성된 암호
 **Backend mode** : gceme 애플리케이션은 8080 포트에서 수신 대기하다가 Compute Engine Instance 메타데이터를 JSON 포멧으로 반환한다.
 **Frontend mode** : gceme 애플리키에션은 backend gceme 서비스에 정보를 요청하고 결과 JSON 을 UI 로 출력
 
-![diagram-2]()
+![diagram](https://github.com/myungpyo/study-k8s/blob/master/k8s_jenkins_2.png)
 
 ---
 
